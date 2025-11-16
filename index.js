@@ -109,7 +109,7 @@ async function sendAndLogNotification(notificationData) {
     // Handle invalid FCM tokens
     if (error.code === 'messaging/registration-token-not-registered') {
       console.warn(`Removing invalid FCM token for user ${toUserId}`);
-      await db.collection('users').doc(toUserId).update({
+      await db.collection('Users').doc(toUserId).update({
         fcmToken: admin.firestore.FieldValue.delete()
       });
     }
@@ -147,7 +147,7 @@ app.post('/register-token', async (req, res) => {
       return res.status(400).json({ error: 'Missing userId or fcmToken' });
     }
 
-    await db.collection('users').doc(userId).set({
+    await db.collection('Users').doc(userId).set({
       fcmToken,
       fcmTokenUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
     }, { merge: true });
