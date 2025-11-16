@@ -352,6 +352,15 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
 });
 
+app.get('/ping', (req, res) => {
+  res.status(200).send('Server is awake!');
+});
+
+// --- Root Endpoint ---
+app.get('/', (req, res) => {
+    res.send('Place Review Backend is running!');
+});
+
 // Start server
 app.listen(PORT,HOST, () => {
    const serverUrl = `http://${HOST}:${PORT}`;
