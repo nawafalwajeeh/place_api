@@ -21,7 +21,103 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(bodyParser.json());
 
-// Helper function to send and log notification
+// // Helper function to send and log notification
+// async function sendAndLogNotification(notificationData) {
+//   const {
+//     toUserId,
+//     type,
+//     title,
+//     body,
+//     senderName,
+//     senderAvatar,
+//     targetId,
+//     targetType,
+//     extraData = {}
+//   } = notificationData;
+
+//   try {
+//     // Get user's FCM token
+//     const userDoc = await db.collection('Users').doc(toUserId).get();
+//     const userData = userDoc.data();
+//     const fcmToken = userData?.fcmToken;
+
+//     if (!fcmToken) {
+//       console.warn(`No FCM token found for user ${toUserId}`);
+//       return false;
+//     }
+
+//     // Prepare FCM message
+//     const message = {
+//       token: fcmToken,
+//       notification: { title, body },
+//       data: {
+//         type,
+//         senderId: extraData.senderId || '',
+//         senderName,
+//         senderAvatar,
+//         targetId,
+//         targetType,
+//         placeId: extraData.placeId || '',
+//         reviewId: extraData.reviewId || '',
+//         commentId: extraData.commentId || '',
+//         ...extraData
+//       },
+//       android: {
+//         priority: 'high',
+//       },
+//       apns: {
+//         payload: {
+//           aps: {
+//             sound: 'default',
+//             badge: 1,
+//           },
+//         },
+//       },
+//     };
+
+//     // Send FCM message
+//     await admin.messaging().send(message);
+//     console.log(`Notification sent to user ${toUserId}: ${title}`);
+
+//     // Save to Firestore
+//     const notificationDoc = {
+//       type,
+//       title,
+//       body,
+//       senderId: extraData.senderId || '',
+//       senderName,
+//       senderAvatar,
+//       targetId,
+//       targetType,
+//       isRead: false,
+//       timestamp: admin.firestore.FieldValue.serverTimestamp(),
+//       extraData,
+//     };
+
+//     await db
+//       .collection('Users')
+//       .doc(toUserId)
+//       .collection('Notifications')
+//       .add(notificationDoc);
+
+//     console.log(`Notification saved to Firestore for user ${toUserId}`);
+//     return true;
+
+//   } catch (error) {
+//     console.error('Error sending notification:', error);
+    
+//     // Handle invalid FCM tokens
+//     if (error.code === 'messaging/registration-token-not-registered') {
+//       console.warn(`Removing invalid FCM token for user ${toUserId}`);
+//       await db.collection('Users').doc(toUserId).update({
+//         fcmToken: admin.firestore.FieldValue.delete()
+//       });
+//     }
+    
+//     return false;
+//   }
+// }
+
 async function sendAndLogNotification(notificationData) {
   const {
     toUserId,
@@ -35,28 +131,47 @@ async function sendAndLogNotification(notificationData) {
     extraData = {}
   } = notificationData;
 
+  console.log('=== Starting Notification Process ===');
+  console.log('toUserId:', toUserId);
+  console.log('type:', type);
+  console.log('title:', title);
+
   try {
-    // Get user's FCM token
-    const userDoc = await db.collection('Users').doc(toUserId).get();
+    // 1. Get user document
+    const userRef = db.collection('Users').doc(toUserId);
+    const userDoc = await userRef.get();
+    
+    if (!userDoc.exists) {
+      console.error(`User ${toUserId} does not exist in Firestore`);
+      return false;
+    }
+    
     const userData = userDoc.data();
+    console.log('User data found:', userData ? 'Yes' : 'No');
+    console.log('User document:', JSON.stringify(userData, null, 2));
+    
     const fcmToken = userData?.fcmToken;
+    console.log('FCM Token:', fcmToken ? 'Exists' : 'MISSING!');
 
     if (!fcmToken) {
       console.warn(`No FCM token found for user ${toUserId}`);
       return false;
     }
 
-    // Prepare FCM message
+    // 2. Prepare FCM message
     const message = {
       token: fcmToken,
-      notification: { title, body },
+      notification: { 
+        title: title || 'Notification',
+        body: body || 'You have a new notification'
+      },
       data: {
-        type,
+        type: type || 'general',
         senderId: extraData.senderId || '',
-        senderName,
-        senderAvatar,
-        targetId,
-        targetType,
+        senderName: senderName || 'User',
+        senderAvatar: senderAvatar || '',
+        targetId: targetId || '',
+        targetType: targetType || 'general',
         placeId: extraData.placeId || '',
         reviewId: extraData.reviewId || '',
         commentId: extraData.commentId || '',
@@ -75,11 +190,15 @@ async function sendAndLogNotification(notificationData) {
       },
     };
 
-    // Send FCM message
-    await admin.messaging().send(message);
-    console.log(`Notification sent to user ${toUserId}: ${title}`);
+    console.log('FCM Message prepared:', JSON.stringify(message, null, 2));
 
-    // Save to Firestore
+    // 3. Send FCM message
+    console.log('Attempting to send FCM message...');
+    const fcmResponse = await admin.messaging().send(message);
+    console.log('FCM Response:', fcmResponse);
+    console.log(`✅ Notification sent to user ${toUserId}: ${title}`);
+
+    // 4. Save to Firestore
     const notificationDoc = {
       type,
       title,
@@ -94,49 +213,103 @@ async function sendAndLogNotification(notificationData) {
       extraData,
     };
 
+    console.log('Saving to Firestore...');
     await db
       .collection('Users')
       .doc(toUserId)
       .collection('Notifications')
       .add(notificationDoc);
 
-    console.log(`Notification saved to Firestore for user ${toUserId}`);
+    console.log(`✅ Notification saved to Firestore for user ${toUserId}`);
     return true;
 
   } catch (error) {
-    console.error('Error sending notification:', error);
+    console.error('❌ Error in sendAndLogNotification:', error);
+    console.error('Error code:', error.code);
+    console.error('Error message:', error.message);
+    console.error('Error stack:', error.stack);
     
-    // Handle invalid FCM tokens
-    if (error.code === 'messaging/registration-token-not-registered') {
+    // Handle specific FCM errors
+    if (error.code === 'messaging/invalid-registration-token' || 
+        error.code === 'messaging/registration-token-not-registered') {
       console.warn(`Removing invalid FCM token for user ${toUserId}`);
-      await db.collection('Users').doc(toUserId).update({
-        fcmToken: admin.firestore.FieldValue.delete()
-      });
+      try {
+        await db.collection('Users').doc(toUserId).update({
+          fcmToken: admin.firestore.FieldValue.delete()
+        });
+        console.log(`Removed invalid token for user ${toUserId}`);
+      } catch (updateError) {
+        console.error('Error removing token:', updateError);
+      }
     }
     
     return false;
   }
 }
 
+
 // API Endpoints
 
 // Send notification
+// app.post('/send-notification', async (req, res) => {
+//   try {
+//     const notificationData = req.body;
+    
+//     const success = await sendAndLogNotification(notificationData);
+    
+//     if (success) {
+//       res.status(200).json({ message: 'Notification sent successfully' });
+//     } else {
+//       res.status(500).json({ error: 'Failed to send notification' });
+//     }
+//   } catch (error) {
+//     console.error('Error in /send-notification:', error);
+//     res.status(500).json({ error: 'Internal server error' });
+//   }
+// });
 app.post('/send-notification', async (req, res) => {
   try {
+    console.log('=== /send-notification Called ===');
+    console.log('Request body:', JSON.stringify(req.body, null, 2));
+    
     const notificationData = req.body;
+    
+    // Validate required fields
+    const requiredFields = ['toUserId', 'type', 'title', 'body'];
+    const missingFields = requiredFields.filter(field => !notificationData[field]);
+    
+    if (missingFields.length > 0) {
+      console.error('Missing required fields:', missingFields);
+      return res.status(400).json({ 
+        error: 'Missing required fields',
+        missingFields 
+      });
+    }
     
     const success = await sendAndLogNotification(notificationData);
     
     if (success) {
-      res.status(200).json({ message: 'Notification sent successfully' });
+      res.status(200).json({ 
+        message: 'Notification sent successfully',
+        success: true 
+      });
     } else {
-      res.status(500).json({ error: 'Failed to send notification' });
+      res.status(500).json({ 
+        error: 'Failed to send notification',
+        success: false 
+      });
     }
   } catch (error) {
-    console.error('Error in /send-notification:', error);
-    res.status(500).json({ error: 'Internal server error' });
+    console.error('❌ Error in /send-notification endpoint:', error);
+    console.error('Full error:', error.stack);
+    res.status(500).json({ 
+      error: 'Internal server error',
+      details: error.message,
+      success: false 
+    });
   }
 });
+
 
 // Register FCM token
 app.post('/register-token', async (req, res) => {
