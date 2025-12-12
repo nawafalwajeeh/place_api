@@ -20,6 +20,27 @@ const PORT = process.env.PORT || 3000;
 app.use(cors());
 app.use(bodyParser.json());
 
+// Helper function to convert all values to strings for FCM
+function convertToStringValues(obj) {
+  const result = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value === null || value === undefined) {
+      result[key] = '';
+    } else if (typeof value === 'object') {
+      // For objects and arrays, stringify them
+      try {
+        result[key] = JSON.stringify(value);
+      } catch {
+        result[key] = String(value);
+      }
+    } else {
+      // Convert everything else to string
+      result[key] = String(value);
+    }
+  }
+  return result;
+}
+
 // Helper function to remove undefined values
 function removeUndefined(obj) {
     if (!obj || typeof obj !== 'object') return {};
@@ -49,16 +70,11 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
             return false;
         }
 
-        // Convert all data values to strings for FCM
-        const stringData = {};
-        Object.entries({
+        // Convert all data values to strings for FCM using the helper function
+        const stringData = convertToStringValues({
             type: type,
             recipientId: recipientId,
             ...data
-        }).forEach(([key, value]) => {
-            if (value !== undefined && value !== null) {
-                stringData[key] = String(value);
-            }
         });
 
         const message = {
@@ -81,7 +97,7 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
         await admin.messaging().send(message);
         console.log(`[sendAndLogNotification] Notification sent successfully to user: ${recipientId}`);
 
-        // Clean data for Firestore
+        // Clean data for Firestore (keep original types)
         const cleanedData = removeUndefined(data);
         
         // Create notification document
@@ -111,11 +127,18 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
 
     } catch (e) {
         console.error(`[sendAndLogNotification] Error sending notification to ${recipientId}: ${e.message}`);
-        if (e.code === 'messaging/registration-token-not-registered' || e.code === 'messaging/invalid-argument') {
+        console.error(`[sendAndLogNotification] Error code: ${e.code}`);
+        
+        if (e.code === 'messaging/registration-token-not-registered' || 
+            e.code === 'messaging/invalid-argument' ||
+            e.code === 'messaging/invalid-registration-token') {
             console.warn(`[sendAndLogNotification] FCM token for ${recipientId} is no longer valid. Attempting to remove from Firestore.`);
-            await db.collection('Users').doc(recipientId).update({ fcmToken: admin.firestore.FieldValue.delete() })
-                .then(() => console.log(`[sendAndLogNotification] Invalid FCM token deleted for ${recipientId}`))
-                .catch(deleteErr => console.error(`[sendAndLogNotification] Error deleting invalid FCM token for ${recipientId}: ${deleteErr.message}`));
+            try {
+                await db.collection('Users').doc(recipientId).update({ fcmToken: admin.firestore.FieldValue.delete() });
+                console.log(`[sendAndLogNotification] Invalid FCM token deleted for ${recipientId}`);
+            } catch (deleteErr) {
+                console.error(`[sendAndLogNotification] Error deleting invalid FCM token for ${recipientId}: ${deleteErr.message}`);
+            }
         }
         return false;
     }
@@ -127,7 +150,10 @@ app.post('/register-token', async (req, res) => {
 
     if (!userId || !fcmToken) {
         console.warn(`[API /register-token] Missing required fields: userId, fcmToken`);
-        return res.status(400).send('Missing required fields: userId, fcmToken');
+        return res.status(400).json({ 
+            success: false, 
+            error: 'Missing required fields: userId, fcmToken' 
+        });
     }
 
     try {
@@ -136,34 +162,61 @@ app.post('/register-token', async (req, res) => {
             fcmTokenUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
         }, { merge: true });
         console.log(`[API /register-token] FCM Token registered/updated for user ${userId}`);
-        res.status(200).json({ success: true, message: 'FCM Token registered successfully.' });
+        res.status(200).json({ 
+            success: true, 
+            message: 'FCM Token registered successfully.' 
+        });
     } catch (e) {
         console.error(`[API /register-token] Error registering FCM token for ${userId}: ${e.message}`);
-        res.status(500).json({ success: false, error: 'Failed to register FCM token.' });
+        res.status(500).json({ 
+            success: false, 
+            error: 'Failed to register FCM token.' 
+        });
     }
 });
 
 // --- API Endpoint to Manually Send Notification ---
 app.post('/send-notification', async (req, res) => {
-    const { toUserId, type, title, body, senderName, senderAvatar, targetId, targetType, extraData } = req.body;
+    const { toUserId, type, title, body, senderName, senderAvatar, targetId, targetType, extraData = {} } = req.body;
 
     if (!toUserId || !type || !title || !body) {
         console.warn(`[API /send-notification] Missing required fields`);
-        return res.status(400).json({ success: false, error: 'Missing required fields' });
+        return res.status(400).json({ 
+            success: false, 
+            error: 'Missing required fields: toUserId, type, title, body' 
+        });
     }
 
-    const success = await sendAndLogNotification(toUserId, title, body, type, {
-        senderName,
-        senderAvatar,
-        targetId,
-        targetType,
-        ...extraData
-    });
-    
-    if (success) {
-        res.status(200).json({ success: true, message: 'Notification sent and saved' });
-    } else {
-        res.status(500).json({ success: false, error: 'Failed to send notification. Check server logs for details.' });
+    try {
+        console.log(`[API /send-notification] Sending notification to user ${toUserId}`);
+        console.log(`[API /send-notification] Type: ${type}, Title: ${title}`);
+        
+        const success = await sendAndLogNotification(toUserId, title, body, type, {
+            senderName: senderName || '',
+            senderAvatar: senderAvatar || '',
+            targetId: targetId || '',
+            targetType: targetType || '',
+            ...extraData
+        });
+        
+        if (success) {
+            res.status(200).json({ 
+                success: true, 
+                message: 'Notification sent and saved' 
+            });
+        } else {
+            res.status(500).json({ 
+                success: false, 
+                error: 'Failed to send notification. Check server logs for details.' 
+            });
+        }
+    } catch (error) {
+        console.error(`[API /send-notification] Error: ${error.message}`);
+        res.status(500).json({ 
+            success: false, 
+            error: 'Internal server error',
+            details: error.message
+        });
     }
 });
 
@@ -196,7 +249,7 @@ function setupNewReviewListener() {
                             targetType: 'place',
                             placeId: newReview.placeId,
                             reviewId: reviewId,
-                            rating: newReview.rating,
+                            rating: String(newReview.rating || 0),
                             reviewText: newReview.reviewText?.substring(0, 100) || ''
                         }
                     );
@@ -247,7 +300,7 @@ function setupReviewLikeListener() {
                                 targetType: 'review',
                                 placeId: newReview.placeId,
                                 reviewId: reviewId,
-                                likeCount: newLikes.length
+                                likeCount: String(newLikes.length)
                             }
                         );
                     }
@@ -383,7 +436,11 @@ function setupNewFollowerListener() {
 
 // Health check endpoints
 app.get('/health', (req, res) => {
-    res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+    res.status(200).json({ 
+        status: 'OK', 
+        timestamp: new Date().toISOString(),
+        service: 'Place Review Notification Server'
+    });
 });
 
 app.get('/ping', (req, res) => {
@@ -394,27 +451,89 @@ app.get('/', (req, res) => {
     res.send('Place Review Notification Server is running!');
 });
 
-// Test endpoint
-app.get('/test', async (req, res) => {
+// Test endpoint for Firestore connection
+app.get('/test-firestore', async (req, res) => {
     try {
+        console.log('=== Testing Firestore Connection ===');
+        
+        // List collections
         const collections = await db.listCollections();
         const collectionNames = collections.map(col => col.id);
-        res.json({
-            status: 'Server is running',
-            firestoreCollections: collectionNames,
+        
+        // Test Users collection
+        const usersCount = await db.collection('Users').count().get();
+        
+        const result = {
+            success: true,
+            firestore: 'connected',
+            projectId: admin.app().options.projectId,
+            collections: collectionNames,
+            usersCount: usersCount.data().count,
             timestamp: new Date().toISOString()
-        });
+        };
+        
+        res.json(result);
+        
     } catch (error) {
-        res.status(500).json({ error: error.message });
+        console.error('❌ Firestore test failed:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message,
+            code: error.code
+        });
+    }
+});
+
+// Test notification endpoint
+app.post('/test-notification', async (req, res) => {
+    try {
+        const { userId } = req.body;
+        
+        if (!userId) {
+            return res.status(400).json({
+                success: false,
+                error: 'Missing userId'
+            });
+        }
+        
+        const success = await sendAndLogNotification(
+            userId,
+            'Test Notification',
+            'This is a test notification from the server',
+            'test_notification',
+            {
+                test: 'true',
+                timestamp: new Date().toISOString(),
+                server: 'Place Review Notification Server'
+            }
+        );
+        
+        if (success) {
+            res.status(200).json({
+                success: true,
+                message: 'Test notification sent successfully'
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: 'Failed to send test notification'
+            });
+        }
+    } catch (error) {
+        console.error('Test notification error:', error);
+        res.status(500).json({
+            success: false,
+            error: error.message
+        });
     }
 });
 
 // Start server
 app.listen(PORT, HOST, () => {
     const serverUrl = `http://${HOST}:${PORT}`;
-    console.log(`Place Review Notification Server running on ${serverUrl}`);
-    console.log(`For Android Emulator, use: http://10.0.2.2:${PORT}`);
-    console.log('All notification listeners initialized');
+    console.log(`🚀 Place Review Notification Server running on ${serverUrl}`);
+    console.log(`📱 For Android Emulator, use: http://10.0.2.2:${PORT}`);
+    console.log('🔔 All notification listeners initialized');
     
     // Initialize all listeners
     setupNewReviewListener();
@@ -422,6 +541,433 @@ app.listen(PORT, HOST, () => {
     setupNewCommentListener();
     setupNewFollowerListener();
 });
+
+
+//-------------------------------------
+// require('dotenv').config();
+// const express = require('express');
+// const admin = require('firebase-admin');
+// const bodyParser = require('body-parser');
+// const cors = require('cors');
+
+// // Initialize Firebase Admin
+// if (!admin.apps.length) {
+//   const serviceAccount = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
+//   admin.initializeApp({
+//     credential: admin.credential.cert(serviceAccount),
+//   });
+// }
+
+// const db = admin.firestore();
+// const app = express();
+// const HOST = process.env.HOST || '0.0.0.0';
+// const PORT = process.env.PORT || 3000;
+
+// app.use(cors());
+// app.use(bodyParser.json());
+
+// // Helper function to remove undefined values
+// function removeUndefined(obj) {
+//     if (!obj || typeof obj !== 'object') return {};
+//     return Object.fromEntries(
+//         Object.entries(obj).filter(([_, v]) => v !== undefined)
+//     );
+// }
+
+// // Main notification sending function (similar to child vaccination app)
+// async function sendAndLogNotification(recipientId, title, body, type, data = {}) {
+//     // Validate recipientId
+//     if (!recipientId || typeof recipientId !== 'string' || recipientId.trim() === '') {
+//         console.warn(`[sendAndLogNotification] recipientId is invalid: ${recipientId}`);
+//         return false;
+//     }
+
+//     try {
+//         // Get user's FCM token from Users collection
+//         const userDoc = await db.collection('Users').doc(recipientId).get();
+//         const userData = userDoc.data();
+//         const fcmToken = userData?.fcmToken;
+
+//         console.log(`[sendAndLogNotification] Fetched FCM token for user ${recipientId}: ${fcmToken ? 'Exists' : 'NOT FOUND'}`);
+
+//         if (!fcmToken) {
+//             console.warn(`[sendAndLogNotification] FCM token not found for user ${recipientId}. Cannot send notification.`);
+//             return false;
+//         }
+
+//         // Convert all data values to strings for FCM
+//         const stringData = {};
+//         Object.entries({
+//             type: type,
+//             recipientId: recipientId,
+//             ...data
+//         }).forEach(([key, value]) => {
+//             if (value !== undefined && value !== null) {
+//                 stringData[key] = String(value);
+//             }
+//         });
+
+//         const message = {
+//             token: fcmToken,
+//             notification: { title, body },
+//             data: stringData,
+//             android: {
+//                 priority: 'high',
+//             },
+//             apns: {
+//                 payload: {
+//                     aps: {
+//                         sound: 'default',
+//                         badge: 1,
+//                     },
+//                 },
+//             },
+//         };
+
+//         await admin.messaging().send(message);
+//         console.log(`[sendAndLogNotification] Notification sent successfully to user: ${recipientId}`);
+
+//         // Clean data for Firestore
+//         const cleanedData = removeUndefined(data);
+        
+//         // Create notification document
+//         const notificationDoc = {
+//             recipientId: recipientId,
+//             title: title,
+//             body: body,
+//             type: type,
+//             data: cleanedData,
+//             isRead: false,
+//             timestamp: admin.firestore.FieldValue.serverTimestamp(),
+//             ...(data.senderId && { senderId: data.senderId }),
+//             ...(data.senderName && { senderName: data.senderName }),
+//             ...(data.senderAvatar && { senderAvatar: data.senderAvatar }),
+//             ...(data.targetId && { targetId: data.targetId }),
+//             ...(data.targetType && { targetType: data.targetType }),
+//         };
+
+//         // Store in user's notifications subcollection
+//         await db.collection('Users')
+//             .doc(recipientId)
+//             .collection('Notifications')
+//             .add(notificationDoc);
+
+//         console.log(`[sendAndLogNotification] Notification logged to Firestore for user ${recipientId}.`);
+//         return true;
+
+//     } catch (e) {
+//         console.error(`[sendAndLogNotification] Error sending notification to ${recipientId}: ${e.message}`);
+//         if (e.code === 'messaging/registration-token-not-registered' || e.code === 'messaging/invalid-argument') {
+//             console.warn(`[sendAndLogNotification] FCM token for ${recipientId} is no longer valid. Attempting to remove from Firestore.`);
+//             await db.collection('Users').doc(recipientId).update({ fcmToken: admin.firestore.FieldValue.delete() })
+//                 .then(() => console.log(`[sendAndLogNotification] Invalid FCM token deleted for ${recipientId}`))
+//                 .catch(deleteErr => console.error(`[sendAndLogNotification] Error deleting invalid FCM token for ${recipientId}: ${deleteErr.message}`));
+//         }
+//         return false;
+//     }
+// }
+
+// // --- API Endpoint to Register/Update FCM Token ---
+// app.post('/register-token', async (req, res) => {
+//     const { userId, fcmToken } = req.body;
+
+//     if (!userId || !fcmToken) {
+//         console.warn(`[API /register-token] Missing required fields: userId, fcmToken`);
+//         return res.status(400).send('Missing required fields: userId, fcmToken');
+//     }
+
+//     try {
+//         await db.collection('Users').doc(userId).set({
+//             fcmToken: fcmToken,
+//             fcmTokenUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+//         }, { merge: true });
+//         console.log(`[API /register-token] FCM Token registered/updated for user ${userId}`);
+//         res.status(200).json({ success: true, message: 'FCM Token registered successfully.' });
+//     } catch (e) {
+//         console.error(`[API /register-token] Error registering FCM token for ${userId}: ${e.message}`);
+//         res.status(500).json({ success: false, error: 'Failed to register FCM token.' });
+//     }
+// });
+
+// // --- API Endpoint to Manually Send Notification ---
+// app.post('/send-notification', async (req, res) => {
+//     const { toUserId, type, title, body, senderName, senderAvatar, targetId, targetType, extraData } = req.body;
+
+//     if (!toUserId || !type || !title || !body) {
+//         console.warn(`[API /send-notification] Missing required fields`);
+//         return res.status(400).json({ success: false, error: 'Missing required fields' });
+//     }
+
+//     const success = await sendAndLogNotification(toUserId, title, body, type, {
+//         senderName,
+//         senderAvatar,
+//         targetId,
+//         targetType,
+//         ...extraData
+//     });
+    
+//     if (success) {
+//         res.status(200).json({ success: true, message: 'Notification sent and saved' });
+//     } else {
+//         res.status(500).json({ success: false, error: 'Failed to send notification. Check server logs for details.' });
+//     }
+// });
+
+// // --- Firestore Listeners for Real-Time Events ---
+
+// // 1. Listener for new reviews
+// function setupNewReviewListener() {
+//     console.log('[Listener] Setting up listener for new reviews...');
+    
+//     db.collection('Reviews').onSnapshot(snapshot => {
+//         snapshot.docChanges().forEach(async change => {
+//             if (change.type === 'added') {
+//                 const newReview = change.doc.data();
+//                 const reviewId = change.doc.id;
+                
+//                 console.log(`[Listener] New review added: ${reviewId} for place: ${newReview.placeId}`);
+                
+//                 // Notify place owner about new review
+//                 if (newReview.userId && newReview.placeOwnerId && newReview.userId !== newReview.placeOwnerId) {
+//                     await sendAndLogNotification(
+//                         newReview.placeOwnerId,
+//                         'New Review on Your Place',
+//                         `${newReview.userName || 'Someone'} reviewed your place`,
+//                         'new_review',
+//                         {
+//                             senderId: newReview.userId,
+//                             senderName: newReview.userName || 'User',
+//                             senderAvatar: newReview.userAvatar || '',
+//                             targetId: newReview.placeId,
+//                             targetType: 'place',
+//                             placeId: newReview.placeId,
+//                             reviewId: reviewId,
+//                             rating: newReview.rating,
+//                             reviewText: newReview.reviewText?.substring(0, 100) || ''
+//                         }
+//                     );
+//                 }
+//             }
+//         });
+//     }, err => {
+//         console.error('[Listener Error] New Reviews:', err);
+//     });
+// }
+
+// // 2. Listener for review likes
+// const reviewLikesCache = {};
+
+// function setupReviewLikeListener() {
+//     console.log('[Listener] Setting up listener for review likes...');
+    
+//     db.collection('Reviews').onSnapshot(snapshot => {
+//         snapshot.docChanges().forEach(async change => {
+//             if (change.type === 'modified') {
+//                 const reviewId = change.doc.id;
+//                 const newReview = change.doc.data();
+//                 const oldReview = change.doc.previous?.data?.() || {};
+                
+//                 const newLikes = newReview.likes || [];
+//                 const oldLikes = oldReview.likes || [];
+                
+//                 // Check if likes count changed
+//                 if (newLikes.length > oldLikes.length) {
+//                     // Find the new liker
+//                     const newLikerId = newLikes.find(like => !oldLikes.includes(like));
+                    
+//                     if (newLikerId && newLikerId !== newReview.userId) {
+//                         // Get liker info
+//                         const likerDoc = await db.collection('Users').doc(newLikerId).get();
+//                         const likerData = likerDoc.data();
+                        
+//                         await sendAndLogNotification(
+//                             newReview.userId,
+//                             'Your Review Got Liked',
+//                             `${likerData?.name || 'Someone'} liked your review`,
+//                             'review_liked',
+//                             {
+//                                 senderId: newLikerId,
+//                                 senderName: likerData?.name || 'User',
+//                                 senderAvatar: likerData?.avatar || '',
+//                                 targetId: reviewId,
+//                                 targetType: 'review',
+//                                 placeId: newReview.placeId,
+//                                 reviewId: reviewId,
+//                                 likeCount: newLikes.length
+//                             }
+//                         );
+//                     }
+//                 }
+                
+//                 // Update cache
+//                 reviewLikesCache[reviewId] = newLikes.length;
+//             }
+//         });
+//     }, err => {
+//         console.error('[Listener Error] Review Likes:', err);
+//     });
+// }
+
+// // 3. Listener for new comments
+// function setupNewCommentListener() {
+//     console.log('[Listener] Setting up listener for new comments...');
+    
+//     db.collection('Comments').onSnapshot(snapshot => {
+//         snapshot.docChanges().forEach(async change => {
+//             if (change.type === 'added') {
+//                 const newComment = change.doc.data();
+//                 const commentId = change.doc.id;
+                
+//                 console.log(`[Listener] New comment added: ${commentId}`);
+                
+//                 // Notify review author if comment is on their review
+//                 if (newComment.parentType === 'review') {
+//                     const reviewDoc = await db.collection('Reviews').doc(newComment.parentId).get();
+//                     const review = reviewDoc.data();
+                    
+//                     if (review && newComment.userId !== review.userId) {
+//                         await sendAndLogNotification(
+//                             review.userId,
+//                             'New Comment on Your Review',
+//                             `${newComment.userName || 'Someone'} commented on your review`,
+//                             'new_comment',
+//                             {
+//                                 senderId: newComment.userId,
+//                                 senderName: newComment.userName || 'User',
+//                                 senderAvatar: newComment.userAvatar || '',
+//                                 targetId: newComment.parentId,
+//                                 targetType: 'review',
+//                                 placeId: review.placeId,
+//                                 reviewId: newComment.parentId,
+//                                 commentId: commentId
+//                             }
+//                         );
+//                     }
+//                 }
+                
+//                 // Notify parent comment author about reply
+//                 if (newComment.parentCommentId) {
+//                     const parentCommentDoc = await db.collection('Comments').doc(newComment.parentCommentId).get();
+//                     const parentComment = parentCommentDoc.data();
+                    
+//                     if (parentComment && newComment.userId !== parentComment.userId) {
+//                         await sendAndLogNotification(
+//                             parentComment.userId,
+//                             'New Reply to Your Comment',
+//                             `${newComment.userName || 'Someone'} replied to your comment`,
+//                             'comment_replied',
+//                             {
+//                                 senderId: newComment.userId,
+//                                 senderName: newComment.userName || 'User',
+//                                 senderAvatar: newComment.userAvatar || '',
+//                                 targetId: newComment.parentCommentId,
+//                                 targetType: 'comment',
+//                                 placeId: parentComment.placeId,
+//                                 commentId: commentId,
+//                                 parentCommentId: newComment.parentCommentId
+//                             }
+//                         );
+//                     }
+//                 }
+//             }
+//         });
+//     }, err => {
+//         console.error('[Listener Error] New Comments:', err);
+//     });
+// }
+
+// // 4. Listener for new followers
+// const userFollowersCache = {};
+
+// function setupNewFollowerListener() {
+//     console.log('[Listener] Setting up listener for new followers...');
+    
+//     db.collection('Users').onSnapshot(snapshot => {
+//         snapshot.docChanges().forEach(async change => {
+//             if (change.type === 'modified') {
+//                 const userId = change.doc.id;
+//                 const newUserData = change.doc.data();
+//                 const oldUserData = change.doc.previous?.data?.() || {};
+                
+//                 const newFollowers = newUserData.followers || [];
+//                 const oldFollowers = oldUserData.followers || [];
+                
+//                 // Check if followers count changed
+//                 if (newFollowers.length > oldFollowers.length) {
+//                     // Find the new follower
+//                     const newFollowerId = newFollowers.find(follower => !oldFollowers.includes(follower));
+                    
+//                     if (newFollowerId && newFollowerId !== userId) {
+//                         // Get follower info
+//                         const followerDoc = await db.collection('Users').doc(newFollowerId).get();
+//                         const followerData = followerDoc.data();
+                        
+//                         await sendAndLogNotification(
+//                             userId,
+//                             'New Follower',
+//                             `${followerData?.name || 'Someone'} started following you`,
+//                             'new_follower',
+//                             {
+//                                 senderId: newFollowerId,
+//                                 senderName: followerData?.name || 'User',
+//                                 senderAvatar: followerData?.avatar || '',
+//                                 targetId: newFollowerId,
+//                                 targetType: 'user'
+//                             }
+//                         );
+//                     }
+//                 }
+                
+//                 // Update cache
+//                 userFollowersCache[userId] = newFollowers.length;
+//             }
+//         });
+//     }, err => {
+//         console.error('[Listener Error] New Followers:', err);
+//     });
+// }
+
+// // Health check endpoints
+// app.get('/health', (req, res) => {
+//     res.status(200).json({ status: 'OK', timestamp: new Date().toISOString() });
+// });
+
+// app.get('/ping', (req, res) => {
+//     res.status(200).send('Server is awake!');
+// });
+
+// app.get('/', (req, res) => {
+//     res.send('Place Review Notification Server is running!');
+// });
+
+// // Test endpoint
+// app.get('/test', async (req, res) => {
+//     try {
+//         const collections = await db.listCollections();
+//         const collectionNames = collections.map(col => col.id);
+//         res.json({
+//             status: 'Server is running',
+//             firestoreCollections: collectionNames,
+//             timestamp: new Date().toISOString()
+//         });
+//     } catch (error) {
+//         res.status(500).json({ error: error.message });
+//     }
+// });
+
+// // Start server
+// app.listen(PORT, HOST, () => {
+//     const serverUrl = `http://${HOST}:${PORT}`;
+//     console.log(`Place Review Notification Server running on ${serverUrl}`);
+//     console.log(`For Android Emulator, use: http://10.0.2.2:${PORT}`);
+//     console.log('All notification listeners initialized');
+    
+//     // Initialize all listeners
+//     setupNewReviewListener();
+//     setupReviewLikeListener();
+//     setupNewCommentListener();
+//     setupNewFollowerListener();
+// });
 
 
 //--------------------------------
