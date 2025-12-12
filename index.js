@@ -180,8 +180,7 @@ function removeUndefined(obj) {
 //         return false;
 //     }
 // }
-
-// second
+// // Second
 // async function sendAndLogNotification(recipientId, title, body, type, data = {}) {
 //     try {
 //         const userDoc = await db.collection('Users').doc(recipientId).get();
@@ -201,7 +200,7 @@ function removeUndefined(obj) {
 //         // Generate unique ID for this notification
 //         const notificationId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-//         // WhatsApp-style notification - ONLY SUPPORTED FIELDS
+//         // WhatsApp-style notification with YOUR app's primary color
 //         const message = {
 //             token: fcmToken,
 //             notification: { 
@@ -229,6 +228,9 @@ function removeUndefined(obj) {
 //                 title: title,
 //                 body: body,
                 
+//                 // Your app's primary color for Flutter to use
+//                 appColor: '#1C59A4',
+                
 //                 // Extra data passed
 //                 ...data
 //             }),
@@ -236,14 +238,15 @@ function removeUndefined(obj) {
 //                 priority: 'high',
 //                 notification: {
 //                     channelId: 'reviews_channel',
-//                     color: '#25D366', // WhatsApp green
+//                     color: '#1C59A4', // YOUR APP'S PRIMARY COLOR
 //                     sound: 'default',
-//                     // Use default icon
+//                     // Use default icon - Flutter will show circular avatar in app
 //                     icon: 'ic_notification',
 //                     clickAction: 'FLUTTER_NOTIFICATION_CLICK',
-//                     // Tag for replacing notifications (SUPPORTED)
+//                     // Tag for replacing notifications
 //                     tag: notificationId,
-//                     // REMOVED: group, groupSummary, autoCancel, showWhen, visibility, defaultVibrateTimings, defaultLightSettings
+//                     // For Android to show image in expanded notification
+//                     ...(hasAvatar && { image: senderAvatar }),
 //                 }
 //             },
 //             apns: {
@@ -257,25 +260,30 @@ function removeUndefined(obj) {
 //                         subtitle: senderName,
 //                         // Category for action buttons
 //                         category: 'MESSAGE_CATEGORY',
+//                         // Thread ID
+//                         'thread-id': `thread_${type}_${targetId || 'general'}`,
 //                     }
 //                 },
 //                 headers: {
 //                     'apns-priority': '10',
 //                     'apns-push-type': 'alert',
-//                     // 'apns-topic': 'com.yourcompany.reviewsapp' // Optional: Add your bundle ID
 //                 },
 //                 // iOS image for rich notifications
 //                 fcmOptions: {
 //                     imageUrl: hasAvatar ? senderAvatar : undefined,
 //                 }
+//             },
+//             // For grouping notifications (WhatsApp style)
+//             fcmOptions: {
+//                 analyticsLabel: `notification_${type}`,
 //             }
 //         };
 
 //         console.log(`[sendAndLogNotification] Sending notification to ${recipientId}`);
-//         console.log(`[sendAndLogNotification] Type: ${type}, Sender: ${senderName}`);
+//         console.log(`[sendAndLogNotification] Sender: ${senderName}, Avatar: ${hasAvatar ? 'Yes' : 'No'}`);
 
 //         const response = await admin.messaging().send(message);
-//         console.log(`[sendAndLogNotification] ✅ Notification sent successfully. Message ID: ${response}`);
+//         console.log(`[sendAndLogNotification] ✅ Notification sent successfully.`);
 
 //         // Save complete notification to Firestore
 //         const notificationDoc = {
@@ -286,7 +294,7 @@ function removeUndefined(obj) {
 //             body: body,
 //             type: type,
             
-//             // Sender info
+//             // Sender info - THESE ARE CRITICAL FOR AVATAR DISPLAY
 //             senderId: data.senderId || '',
 //             senderName: senderName,
 //             senderAvatar: senderAvatar,
@@ -301,13 +309,21 @@ function removeUndefined(obj) {
 //             delivered: true,
 //             fcmMessageId: response,
             
+//             // Your app color
+//             appColor: '#1C59A4',
+            
 //             // Original data
 //             data: removeUndefined(data),
             
-//             // Additional fields
+//             // For WhatsApp-style display
 //             extraData: {
 //                 ...removeUndefined(data),
-//                 notificationId: notificationId
+//                 notificationId: notificationId,
+//                 // Ensure avatar and name are included
+//                 senderAvatar: senderAvatar,
+//                 senderName: senderName,
+//                 senderId: data.senderId || '',
+//                 appColor: '#1C59A4'
 //             }
 //         };
 
@@ -317,9 +333,9 @@ function removeUndefined(obj) {
 //             .doc(notificationId)
 //             .set(notificationDoc);
 
-//         console.log(`[sendAndLogNotification] ✅ Notification saved to Firestore with ID: ${notificationId}`);
+//         console.log(`[sendAndLogNotification] ✅ Notification saved to Firestore`);
         
-//         // Update user's notification stats
+//         // Update user's last notification time
 //         await db.collection('Users').doc(recipientId).update({
 //             lastNotificationAt: admin.firestore.FieldValue.serverTimestamp(),
 //         });
@@ -327,38 +343,42 @@ function removeUndefined(obj) {
 //         return true;
 
 //     } catch (e) {
-//         console.error(`[sendAndLogNotification] ❌ Error sending notification to ${recipientId}:`, e.message);
-        
-//         // Try to save error to Firestore
-//         try {
-//             const notificationId = `error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-            
-//             await db.collection('Users')
-//                 .doc(recipientId)
-//                 .collection('Notifications')
-//                 .doc(notificationId)
-//                 .set({
-//                     id: notificationId,
-//                     recipientId: recipientId,
-//                     title: title,
-//                     body: body,
-//                     type: type,
-//                     isRead: false,
-//                     timestamp: admin.firestore.FieldValue.serverTimestamp(),
-//                     delivered: false,
-//                     error: e.message,
-//                     data: removeUndefined(data),
-//                 });
-                
-//             console.log(`[sendAndLogNotification] ⚠️ Error notification saved to Firestore`);
-            
-//         } catch (firestoreError) {
-//             console.error(`[sendAndLogNotification] ❌ Failed to save error to Firestore: ${firestoreError.message}`);
-//         }
-        
+//         console.error(`[sendAndLogNotification] ❌ Error:`, e.message);
 //         return false;
 //     }
 // }
+
+// // --- API Endpoint to Register/Update FCM Token ---
+// app.post('/register-token', async (req, res) => {
+//     const { userId, fcmToken } = req.body;
+
+//     if (!userId || !fcmToken) {
+//         console.warn(`[API /register-token] Missing required fields: userId, fcmToken`);
+//         return res.status(400).json({ 
+//             success: false, 
+//             error: 'Missing required fields: userId, fcmToken' 
+//         });
+//     }
+
+//     try {
+//         await db.collection('Users').doc(userId).set({
+//             fcmToken: fcmToken,
+//             fcmTokenUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
+//         }, { merge: true });
+//         console.log(`[API /register-token] FCM Token registered/updated for user ${userId}`);
+//         res.status(200).json({ 
+//             success: true, 
+//             message: 'FCM Token registered successfully.' 
+//         });
+//     } catch (e) {
+//         console.error(`[API /register-token] Error registering FCM token for ${userId}: ${e.message}`);
+//         res.status(500).json({ 
+//             success: false, 
+//             error: 'Failed to register FCM token.' 
+//         });
+//     }
+// });
+//-------------------
 
 async function sendAndLogNotification(recipientId, title, body, type, data = {}) {
     try {
@@ -370,23 +390,41 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
             return false;
         }
 
-        const senderAvatar = data.senderAvatar || '';
+        let senderAvatar = data.senderAvatar || '';
         const senderName = data.senderName || '';
-        const hasAvatar = senderAvatar && senderAvatar.startsWith('http');
         const targetId = data.targetId || '';
         const targetType = data.targetType || '';
 
-        // Generate unique ID for this notification
+        // Validate and clean avatar URL
+        let hasAvatar = false;
+        if (senderAvatar && senderAvatar.startsWith('http')) {
+            // Ensure it's a direct image URL, not a page
+            if (!senderAvatar.match(/\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i)) {
+                console.warn(`[sendAndLogNotification] Avatar URL may not be a direct image: ${senderAvatar}`);
+                // Try to use a fallback
+                senderAvatar = 'https://ui-avatars.com/api/?name=' + encodeURIComponent(senderName || 'User') + '&background=1C59A4&color=fff&size=200';
+            }
+            hasAvatar = true;
+        } else if (senderAvatar === '') {
+            // Generate a colored avatar with initials
+            const initials = (senderName || 'U').charAt(0).toUpperCase();
+            senderAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(initials)}&background=1C59A4&color=fff&size=200&bold=true`;
+            hasAvatar = true;
+        }
+
+        // Generate unique ID
         const notificationId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-        // WhatsApp-style notification with YOUR app's primary color
+        // WhatsApp-style notification
         const message = {
             token: fcmToken,
             notification: { 
                 title: senderName || title,
                 body: body,
-                // iOS specific image for rich notifications
-                ...(hasAvatar && { imageUrl: senderAvatar })
+                // iOS specific image - use smaller size
+                ...(hasAvatar && { 
+                    imageUrl: `${senderAvatar}${senderAvatar.includes('?') ? '&' : '?'}size=400x400`
+                })
             },
             data: convertToStringValues({
                 // Core fields
@@ -394,38 +432,36 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
                 recipientId: recipientId,
                 notificationId: notificationId,
                 
-                // Sender info for WhatsApp-style display
+                // Sender info
                 senderAvatar: senderAvatar,
                 senderName: senderName,
                 senderId: data.senderId || '',
                 
-                // Target info for navigation
+                // Target info
                 targetId: targetId,
                 targetType: targetType,
                 
-                // Original notification content
+                // Content
                 title: title,
                 body: body,
                 
-                // Your app's primary color for Flutter to use
+                // App color
                 appColor: '#1C59A4',
                 
-                // Extra data passed
+                // Extra data
                 ...data
             }),
             android: {
                 priority: 'high',
                 notification: {
                     channelId: 'reviews_channel',
-                    color: '#1C59A4', // YOUR APP'S PRIMARY COLOR
+                    color: '#1C59A4',
                     sound: 'default',
-                    // Use default icon - Flutter will show circular avatar in app
                     icon: 'ic_notification',
                     clickAction: 'FLUTTER_NOTIFICATION_CLICK',
-                    // Tag for replacing notifications
                     tag: notificationId,
-                    // For Android to show image in expanded notification
-                    ...(hasAvatar && { image: senderAvatar }),
+                    // Only add image if we have a valid avatar
+                    ...(hasAvatar && { image: `${senderAvatar}${senderAvatar.includes('?') ? '&' : '?'}w=400&h=400&fit=crop` }),
                 }
             },
             apns: {
@@ -433,77 +469,44 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
                     aps: {
                         sound: 'default',
                         badge: 1,
-                        // For iOS rich notifications with image
                         'mutable-content': hasAvatar ? 1 : 0,
-                        // Sender name as subtitle
                         subtitle: senderName,
-                        // Category for action buttons
                         category: 'MESSAGE_CATEGORY',
-                        // Thread ID
-                        'thread-id': `thread_${type}_${targetId || 'general'}`,
                     }
                 },
                 headers: {
                     'apns-priority': '10',
                     'apns-push-type': 'alert',
                 },
-                // iOS image for rich notifications
                 fcmOptions: {
-                    imageUrl: hasAvatar ? senderAvatar : undefined,
+                    imageUrl: hasAvatar ? `${senderAvatar}${senderAvatar.includes('?') ? '&' : '?'}w=400&h=400&fit=crop` : undefined,
                 }
-            },
-            // For grouping notifications (WhatsApp style)
-            fcmOptions: {
-                analyticsLabel: `notification_${type}`,
             }
         };
 
-        console.log(`[sendAndLogNotification] Sending notification to ${recipientId}`);
-        console.log(`[sendAndLogNotification] Sender: ${senderName}, Avatar: ${hasAvatar ? 'Yes' : 'No'}`);
+        console.log(`[sendAndLogNotification] Sending to ${recipientId}`);
+        console.log(`[sendAndLogNotification] Avatar URL: ${senderAvatar}`);
 
         const response = await admin.messaging().send(message);
-        console.log(`[sendAndLogNotification] ✅ Notification sent successfully.`);
+        console.log(`[sendAndLogNotification] ✅ Notification sent`);
 
-        // Save complete notification to Firestore
+        // Save to Firestore
         const notificationDoc = {
-            // Core fields
             id: notificationId,
             recipientId: recipientId,
             title: title,
             body: body,
             type: type,
-            
-            // Sender info - THESE ARE CRITICAL FOR AVATAR DISPLAY
             senderId: data.senderId || '',
             senderName: senderName,
             senderAvatar: senderAvatar,
-            
-            // Target info
             targetId: targetId,
             targetType: targetType,
-            
-            // Metadata
             isRead: false,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             delivered: true,
             fcmMessageId: response,
-            
-            // Your app color
-            appColor: '#1C59A4',
-            
-            // Original data
             data: removeUndefined(data),
-            
-            // For WhatsApp-style display
-            extraData: {
-                ...removeUndefined(data),
-                notificationId: notificationId,
-                // Ensure avatar and name are included
-                senderAvatar: senderAvatar,
-                senderName: senderName,
-                senderId: data.senderId || '',
-                appColor: '#1C59A4'
-            }
         };
 
         await db.collection('Users')
@@ -512,12 +515,7 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
             .doc(notificationId)
             .set(notificationDoc);
 
-        console.log(`[sendAndLogNotification] ✅ Notification saved to Firestore`);
-        
-        // Update user's last notification time
-        await db.collection('Users').doc(recipientId).update({
-            lastNotificationAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
+        console.log(`[sendAndLogNotification] ✅ Saved to Firestore`);
         
         return true;
 
@@ -527,36 +525,6 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
     }
 }
 
-// --- API Endpoint to Register/Update FCM Token ---
-app.post('/register-token', async (req, res) => {
-    const { userId, fcmToken } = req.body;
-
-    if (!userId || !fcmToken) {
-        console.warn(`[API /register-token] Missing required fields: userId, fcmToken`);
-        return res.status(400).json({ 
-            success: false, 
-            error: 'Missing required fields: userId, fcmToken' 
-        });
-    }
-
-    try {
-        await db.collection('Users').doc(userId).set({
-            fcmToken: fcmToken,
-            fcmTokenUpdatedAt: admin.firestore.FieldValue.serverTimestamp(),
-        }, { merge: true });
-        console.log(`[API /register-token] FCM Token registered/updated for user ${userId}`);
-        res.status(200).json({ 
-            success: true, 
-            message: 'FCM Token registered successfully.' 
-        });
-    } catch (e) {
-        console.error(`[API /register-token] Error registering FCM token for ${userId}: ${e.message}`);
-        res.status(500).json({ 
-            success: false, 
-            error: 'Failed to register FCM token.' 
-        });
-    }
-});
 
 // --- API Endpoint to Manually Send Notification ---
 app.post('/send-notification', async (req, res) => {
