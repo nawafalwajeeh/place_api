@@ -310,7 +310,64 @@ app.post('/send-notification', async (req, res) => {
   }
 });
 
-
+app.get('/test-firestore', async (req, res) => {
+  try {
+    console.log('=== Testing Firestore Connection ===');
+    
+    // Test 1: Check db instance
+    console.log('1. Checking db instance...');
+    if (!db) {
+      return res.json({ success: false, error: 'Firestore db not initialized' });
+    }
+    console.log('✅ db instance exists');
+    
+    // Test 2: List collections
+    console.log('2. Listing collections...');
+    const collections = await db.listCollections();
+    const collectionNames = collections.map(col => col.id);
+    console.log('✅ Collections:', collectionNames);
+    
+    // Test 3: Try to read a document
+    console.log('3. Testing document read...');
+    const testRef = db.collection('test').doc('test');
+    const testDoc = await testRef.get();
+    console.log('✅ Can read documents');
+    
+    // Test 4: Check specific user
+    const userId = 'oVsdr8OatSQFltu7CtqKTo4YQDj2';
+    console.log(`4. Checking user: ${userId}`);
+    
+    // Try lowercase 'users'
+    const userRef = db.collection('users').doc(userId);
+    const userDoc = await userRef.get();
+    
+    const result = {
+      success: true,
+      firestore: 'connected',
+      projectId: admin.app().options.projectId,
+      collections: collectionNames,
+      testDocument: testDoc.exists ? 'exists' : 'does not exist',
+      userCheck: {
+        userId: userId,
+        collection: 'users',
+        exists: userDoc.exists,
+        data: userDoc.exists ? 'has data' : 'no data',
+        hasFcmToken: userDoc.exists && !!userDoc.data()?.fcmToken
+      }
+    };
+    
+    res.json(result);
+    
+  } catch (error) {
+    console.error('❌ Firestore test failed:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message,
+      code: error.code,
+      stack: error.stack
+    });
+  }
+});
 // Register FCM token
 app.post('/register-token', async (req, res) => {
   try {
