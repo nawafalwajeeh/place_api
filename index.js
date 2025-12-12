@@ -181,7 +181,6 @@ function removeUndefined(obj) {
 //     }
 // }
 
-
 async function sendAndLogNotification(recipientId, title, body, type, data = {}) {
     try {
         const userDoc = await db.collection('Users').doc(recipientId).get();
@@ -200,9 +199,8 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
 
         // Generate unique ID for this notification
         const notificationId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        const threadId = data.threadId || `thread_${type}_${targetId || recipientId}`;
 
-        // WhatsApp-style notification with all required fields
+        // WhatsApp-style notification - ONLY SUPPORTED FIELDS
         const message = {
             token: fcmToken,
             notification: { 
@@ -226,9 +224,6 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
                 targetId: targetId,
                 targetType: targetType,
                 
-                // Thread/grouping info
-                threadId: threadId,
-                
                 // Original notification content
                 title: title,
                 body: body,
@@ -242,24 +237,12 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
                     channelId: 'reviews_channel',
                     color: '#25D366', // WhatsApp green
                     sound: 'default',
-                    // Use default icon - Flutter will handle avatar display
-                    icon: '@mipmap/launcher_icon',
+                    // Use default icon
+                    icon: 'ic_notification',
                     clickAction: 'FLUTTER_NOTIFICATION_CLICK',
-                    // Add tag for replacing notifications
+                    // Tag for replacing notifications (SUPPORTED)
                     tag: notificationId,
-                    // Group notifications by thread
-                    group: threadId,
-                    groupSummary: false,
-                    // Auto cancel when tapped
-                    autoCancel: true,
-                    // Show when
-                    showWhen: true,
-                    // Local only (don't show on lock screen if sensitive)
-                    visibility: 'private',
-                    // Default vibration
-                    defaultVibrateTimings: true,
-                    // Default light
-                    defaultLightSettings: true
+                    // REMOVED: group, groupSummary, autoCancel, showWhen, visibility, defaultVibrateTimings, defaultLightSettings
                 }
             },
             apns: {
@@ -271,58 +254,24 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
                         'mutable-content': hasAvatar ? 1 : 0,
                         // Sender name as subtitle
                         subtitle: senderName,
-                        // Thread ID for grouping
-                        'thread-id': threadId,
                         // Category for action buttons
                         category: 'MESSAGE_CATEGORY',
-                        // Content available for background
-                        'content-available': 1
                     }
                 },
                 headers: {
                     'apns-priority': '10',
                     'apns-push-type': 'alert',
-                    'apns-topic': 'com.yourcompany.reviewsapp' // REPLACE WITH YOUR BUNDLE ID
+                    // 'apns-topic': 'com.yourcompany.reviewsapp' // Optional: Add your bundle ID
                 },
                 // iOS image for rich notifications
                 fcmOptions: {
                     imageUrl: hasAvatar ? senderAvatar : undefined,
-                    analyticsLabel: `notification_${type}`
                 }
-            },
-            // Web push configuration
-            webpush: {
-                notification: {
-                    icon: hasAvatar ? senderAvatar : 'https://your-app.com/icon.png',
-                    badge: 'https://your-app.com/badge.png',
-                    actions: [
-                        {
-                            action: 'view',
-                            title: '👁️ View'
-                        },
-                        {
-                            action: 'mark_read',
-                            title: '✓ Mark Read'
-                        }
-                    ],
-                    requireInteraction: false,
-                    silent: false
-                },
-                headers: {
-                    Urgency: 'high'
-                },
-                fcmOptions: {
-                    link: 'https://your-app.com/notifications'
-                }
-            },
-            // Analytics
-            fcmOptions: {
-                analyticsLabel: `notification_${type}_${Date.now()}`
             }
         };
 
         console.log(`[sendAndLogNotification] Sending notification to ${recipientId}`);
-        console.log(`[sendAndLogNotification] Type: ${type}, Sender: ${senderName}, Avatar: ${hasAvatar ? 'Yes' : 'No'}`);
+        console.log(`[sendAndLogNotification] Type: ${type}, Sender: ${senderName}`);
 
         const response = await admin.messaging().send(message);
         console.log(`[sendAndLogNotification] ✅ Notification sent successfully. Message ID: ${response}`);
@@ -350,19 +299,14 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
             delivered: true,
             fcmMessageId: response,
-            platform: 'server',
-            
-            // Thread/grouping
-            threadId: threadId,
             
             // Original data
             data: removeUndefined(data),
             
-            // Additional fields for display
+            // Additional fields
             extraData: {
                 ...removeUndefined(data),
-                notificationId: notificationId,
-                threadId: threadId
+                notificationId: notificationId
             }
         };
 
@@ -377,18 +321,14 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
         // Update user's notification stats
         await db.collection('Users').doc(recipientId).update({
             lastNotificationAt: admin.firestore.FieldValue.serverTimestamp(),
-            unreadNotificationCount: admin.firestore.FieldValue.increment(1),
-            'stats.totalNotifications': admin.firestore.FieldValue.increment(1),
-            'stats.notificationsByType.${type}': admin.firestore.FieldValue.increment(1)
         });
         
         return true;
 
     } catch (e) {
         console.error(`[sendAndLogNotification] ❌ Error sending notification to ${recipientId}:`, e.message);
-        console.error(`[sendAndLogNotification] Error stack:`, e.stack);
         
-        // Try to save error to Firestore for debugging
+        // Try to save error to Firestore
         try {
             const notificationId = `error_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
             
@@ -406,14 +346,10 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
                     timestamp: admin.firestore.FieldValue.serverTimestamp(),
                     delivered: false,
                     error: e.message,
-                    errorCode: e.code,
                     data: removeUndefined(data),
-                    senderName: data.senderName || '',
-                    senderAvatar: data.senderAvatar || '',
-                    platform: 'server_error'
                 });
                 
-            console.log(`[sendAndLogNotification] ⚠️ Error notification saved to Firestore with ID: ${notificationId}`);
+            console.log(`[sendAndLogNotification] ⚠️ Error notification saved to Firestore`);
             
         } catch (firestoreError) {
             console.error(`[sendAndLogNotification] ❌ Failed to save error to Firestore: ${firestoreError.message}`);
@@ -422,6 +358,7 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
         return false;
     }
 }
+
 
 // --- API Endpoint to Register/Update FCM Token ---
 app.post('/register-token', async (req, res) => {
