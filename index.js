@@ -338,7 +338,7 @@ app.get('/test-firestore', async (req, res) => {
     console.log(`4. Checking user: ${userId}`);
     
     // Try lowercase 'users'
-    const userRef = db.collection('users').doc(userId);
+    const userRef = db.collection('Users').doc(userId);
     const userDoc = await userRef.get();
     
     const result = {
