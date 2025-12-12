@@ -21,6 +21,27 @@ app.use(cors());
 app.use(bodyParser.json());
 
 // Helper function to convert all values to strings for FCM
+// function convertToStringValues(obj) {
+//   const result = {};
+//   for (const [key, value] of Object.entries(obj)) {
+//     if (value === null || value === undefined) {
+//       result[key] = '';
+//     } else if (typeof value === 'object') {
+//       // For objects and arrays, stringify them
+//       try {
+//         result[key] = JSON.stringify(value);
+//       } catch {
+//         result[key] = String(value);
+//       }
+//     } else {
+//       // Convert everything else to string
+//       result[key] = String(value);
+//     }
+//   }
+//   return result;
+// }
+
+// Make sure this function exists in your server code:
 function convertToStringValues(obj) {
   const result = {};
   for (const [key, value] of Object.entries(obj)) {
@@ -33,23 +54,135 @@ function convertToStringValues(obj) {
       } catch {
         result[key] = String(value);
       }
+    } else if (typeof value === 'boolean') {
+      // Convert boolean to string
+      result[key] = value ? 'true' : 'false';
+    } else if (typeof value === 'number') {
+      // Convert number to string
+      result[key] = value.toString();
     } else {
-      // Convert everything else to string
+      // Already a string or other type
       result[key] = String(value);
     }
   }
   return result;
 }
 
-// Helper function to remove undefined values
+// And the removeUndefined function:
 function removeUndefined(obj) {
     if (!obj || typeof obj !== 'object') return {};
     return Object.fromEntries(
-        Object.entries(obj).filter(([_, v]) => v !== undefined)
+        Object.entries(obj).filter(([_, v]) => v !== undefined && v !== null)
     );
 }
 
+
+
+// Helper function to remove undefined values
+// function removeUndefined(obj) {
+//     if (!obj || typeof obj !== 'object') return {};
+//     return Object.fromEntries(
+//         Object.entries(obj).filter(([_, v]) => v !== undefined)
+//     );
+// }
+
 // Main notification sending function (similar to child vaccination app)
+// async function sendAndLogNotification(recipientId, title, body, type, data = {}) {
+//     // Validate recipientId
+//     if (!recipientId || typeof recipientId !== 'string' || recipientId.trim() === '') {
+//         console.warn(`[sendAndLogNotification] recipientId is invalid: ${recipientId}`);
+//         return false;
+//     }
+
+//     try {
+//         // Get user's FCM token from Users collection
+//         const userDoc = await db.collection('Users').doc(recipientId).get();
+//         const userData = userDoc.data();
+//         const fcmToken = userData?.fcmToken;
+
+//         console.log(`[sendAndLogNotification] Fetched FCM token for user ${recipientId}: ${fcmToken ? 'Exists' : 'NOT FOUND'}`);
+
+//         if (!fcmToken) {
+//             console.warn(`[sendAndLogNotification] FCM token not found for user ${recipientId}. Cannot send notification.`);
+//             return false;
+//         }
+
+//         // Convert all data values to strings for FCM using the helper function
+//         const stringData = convertToStringValues({
+//             type: type,
+//             recipientId: recipientId,
+//             ...data
+//         });
+
+//         const message = {
+//             token: fcmToken,
+//             notification: { title, body },
+//             data: stringData,
+//             android: {
+//                 priority: 'high',
+//             },
+//             apns: {
+//                 payload: {
+//                     aps: {
+//                         sound: 'default',
+//                         badge: 1,
+//                     },
+//                 },
+//             },
+//         };
+
+//         await admin.messaging().send(message);
+//         console.log(`[sendAndLogNotification] Notification sent successfully to user: ${recipientId}`);
+
+//         // Clean data for Firestore (keep original types)
+//         const cleanedData = removeUndefined(data);
+        
+//         // Create notification document
+//         const notificationDoc = {
+//             recipientId: recipientId,
+//             title: title,
+//             body: body,
+//             type: type,
+//             data: cleanedData,
+//             isRead: false,
+//             timestamp: admin.firestore.FieldValue.serverTimestamp(),
+//             ...(data.senderId && { senderId: data.senderId }),
+//             ...(data.senderName && { senderName: data.senderName }),
+//             ...(data.senderAvatar && { senderAvatar: data.senderAvatar }),
+//             ...(data.targetId && { targetId: data.targetId }),
+//             ...(data.targetType && { targetType: data.targetType }),
+//         };
+
+//         // Store in user's notifications subcollection
+//         await db.collection('Users')
+//             .doc(recipientId)
+//             .collection('Notifications')
+//             .add(notificationDoc);
+
+//         console.log(`[sendAndLogNotification] Notification logged to Firestore for user ${recipientId}.`);
+//         return true;
+
+//     } catch (e) {
+//         console.error(`[sendAndLogNotification] Error sending notification to ${recipientId}: ${e.message}`);
+//         console.error(`[sendAndLogNotification] Error code: ${e.code}`);
+        
+//         if (e.code === 'messaging/registration-token-not-registered' || 
+//             e.code === 'messaging/invalid-argument' ||
+//             e.code === 'messaging/invalid-registration-token') {
+//             console.warn(`[sendAndLogNotification] FCM token for ${recipientId} is no longer valid. Attempting to remove from Firestore.`);
+//             try {
+//                 await db.collection('Users').doc(recipientId).update({ fcmToken: admin.firestore.FieldValue.delete() });
+//                 console.log(`[sendAndLogNotification] Invalid FCM token deleted for ${recipientId}`);
+//             } catch (deleteErr) {
+//                 console.error(`[sendAndLogNotification] Error deleting invalid FCM token for ${recipientId}: ${deleteErr.message}`);
+//             }
+//         }
+//         return false;
+//     }
+// }
+
+// Update your sendAndLogNotification function in server.js:
+
 async function sendAndLogNotification(recipientId, title, body, type, data = {}) {
     // Validate recipientId
     if (!recipientId || typeof recipientId !== 'string' || recipientId.trim() === '') {
@@ -70,37 +203,142 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
             return false;
         }
 
-        // Convert all data values to strings for FCM using the helper function
+        // Extract sender info for WhatsApp-style notification
+        const senderAvatar = data.senderAvatar || '';
+        const senderName = data.senderName || '';
+        const hasAvatar = senderAvatar && senderAvatar.startsWith('http');
+
+        // Convert all data values to strings for FCM
         const stringData = convertToStringValues({
             type: type,
             recipientId: recipientId,
             ...data
         });
 
+        // WhatsApp-style notification payload
         const message = {
             token: fcmToken,
-            notification: { title, body },
+            notification: { 
+                title: senderName || title, // Show sender name as title
+                body: body,
+                // iOS specific - show avatar if available
+                ...(hasAvatar && { imageUrl: senderAvatar })
+            },
             data: stringData,
             android: {
                 priority: 'high',
+                notification: {
+                    // Android notification settings
+                    channelId: 'reviews_channel',
+                    color: '#25D366', // WhatsApp green
+                    sound: 'default',
+                    // Avatar as icon (will show as small icon in notification)
+                    icon: hasAvatar ? senderAvatar : 'default_icon',
+                    // Large icon for expanded notification (circular avatar)
+                    ...(hasAvatar && { image: senderAvatar }),
+                    // Click action
+                    clickAction: 'FLUTTER_NOTIFICATION_CLICK',
+                    // Android 8.0+ notification importance
+                    importance: 'high',
+                    // Show timestamp
+                    eventTimestamp: new Date().toISOString(),
+                    // Vibration pattern
+                    vibrateTimingsMillis: [0, 500, 250, 500],
+                    // Light settings (LED)
+                    lightSettings: {
+                        color: {
+                            red: 0,
+                            green: 229,
+                            blue: 102,
+                            alpha: 1
+                        },
+                        lightOnDurationMillis: 1000,
+                        lightOffDurationMillis: 1000
+                    },
+                    // Local-only (don't show on locked screen)
+                    visibility: 'public',
+                    // Notification count (badge)
+                    notificationCount: 1,
+                    // Grouping
+                    group: 'reviews_app',
+                    groupSummary: false
+                }
             },
             apns: {
                 payload: {
                     aps: {
                         sound: 'default',
                         badge: 1,
-                    },
+                        // iOS notification settings
+                        'mutable-content': hasAvatar ? 1 : 0,
+                        // Category for action buttons
+                        category: 'MESSAGE_CATEGORY',
+                        // Thread identifier for grouping
+                        'thread-id': data.threadId || 'reviews_app',
+                        // Show sender name as subtitle
+                        subtitle: senderName,
+                        // Avatar for iOS rich notifications
+                        ...(hasAvatar && { 
+                            'attachment-url': senderAvatar 
+                        }),
+                        // Content available for background processing
+                        'content-available': 1
+                    }
                 },
+                // Headers for iOS
+                headers: {
+                    'apns-priority': '10',
+                    'apns-topic': 'com.yourcompany.reviewsapp', // YOUR BUNDLE ID HERE
+                    'apns-push-type': 'alert'
+                },
+                // FCM options for iOS
+                fcmOptions: {
+                    imageUrl: hasAvatar ? senderAvatar : undefined
+                }
             },
+            // WebPush configuration
+            webpush: {
+                notification: {
+                    title: senderName || title,
+                    body: body,
+                    icon: hasAvatar ? senderAvatar : 'https://your-app.com/icon.png',
+                    badge: 'https://your-app.com/badge.png',
+                    image: hasAvatar ? senderAvatar : undefined,
+                    vibrate: [200, 100, 200, 100],
+                    requireInteraction: true,
+                    actions: [
+                        {
+                            action: 'view',
+                            title: '👁️ View'
+                        },
+                        {
+                            action: 'mark_read',
+                            title: '✓ Mark Read'
+                        }
+                    ]
+                },
+                headers: {
+                    Urgency: 'high'
+                }
+            },
+            // FCM options
+            fcmOptions: {
+                analyticsLabel: type
+            }
         };
 
-        await admin.messaging().send(message);
-        console.log(`[sendAndLogNotification] Notification sent successfully to user: ${recipientId}`);
+        console.log(`[sendAndLogNotification] Sending WhatsApp-style notification to ${recipientId}`);
+        console.log(`[sendAndLogNotification] Title: ${senderName || title}, Body: ${body}`);
+        console.log(`[sendAndLogNotification] Avatar: ${hasAvatar ? 'Yes' : 'No'}`);
+
+        // Send the notification
+        const response = await admin.messaging().send(message);
+        console.log(`[sendAndLogNotification] Notification sent successfully. Message ID: ${response}`);
 
         // Clean data for Firestore (keep original types)
         const cleanedData = removeUndefined(data);
         
-        // Create notification document
+        // Create notification document for Firestore
         const notificationDoc = {
             recipientId: recipientId,
             title: title,
@@ -109,11 +347,20 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
             data: cleanedData,
             isRead: false,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            ...(data.senderId && { senderId: data.senderId }),
-            ...(data.senderName && { senderName: data.senderName }),
-            ...(data.senderAvatar && { senderAvatar: data.senderAvatar }),
-            ...(data.targetId && { targetId: data.targetId }),
-            ...(data.targetType && { targetType: data.targetType }),
+            senderId: data.senderId || '',
+            senderName: senderName || '',
+            senderAvatar: senderAvatar || '',
+            targetId: data.targetId || '',
+            targetType: data.targetType || '',
+            // Additional metadata
+            platform: 'server',
+            version: '1.0',
+            delivered: true,
+            deliveryTime: new Date().toISOString(),
+            // For grouping notifications
+            threadId: data.threadId || `thread_${type}_${recipientId}`,
+            // For analytics
+            notificationId: `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
         };
 
         // Store in user's notifications subcollection
@@ -123,23 +370,88 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
             .add(notificationDoc);
 
         console.log(`[sendAndLogNotification] Notification logged to Firestore for user ${recipientId}.`);
+        
+        // Also update user's last notification time
+        await db.collection('Users').doc(recipientId).update({
+            lastNotificationAt: admin.firestore.FieldValue.serverTimestamp(),
+            notificationCount: admin.firestore.FieldValue.increment(1)
+        });
+
         return true;
 
     } catch (e) {
-        console.error(`[sendAndLogNotification] Error sending notification to ${recipientId}: ${e.message}`);
+        console.error(`[sendAndLogNotification] Error sending notification to ${recipientId}:`, e);
         console.error(`[sendAndLogNotification] Error code: ${e.code}`);
+        console.error(`[sendAndLogNotification] Error details:`, e.details);
         
-        if (e.code === 'messaging/registration-token-not-registered' || 
-            e.code === 'messaging/invalid-argument' ||
-            e.code === 'messaging/invalid-registration-token') {
-            console.warn(`[sendAndLogNotification] FCM token for ${recipientId} is no longer valid. Attempting to remove from Firestore.`);
+        // Handle specific FCM errors
+        const invalidTokenErrors = [
+            'messaging/registration-token-not-registered',
+            'messaging/invalid-argument',
+            'messaging/invalid-registration-token',
+            'messaging/device-message-rate-exceeded',
+            'messaging/message-rate-exceeded'
+        ];
+        
+        if (invalidTokenErrors.includes(e.code)) {
+            console.warn(`[sendAndLogNotification] FCM token for ${recipientId} is invalid or rate limited. Attempting to remove from Firestore.`);
             try {
-                await db.collection('Users').doc(recipientId).update({ fcmToken: admin.firestore.FieldValue.delete() });
+                await db.collection('Users').doc(recipientId).update({ 
+                    fcmToken: admin.firestore.FieldValue.delete(),
+                    fcmTokenInvalidAt: admin.firestore.FieldValue.serverTimestamp()
+                });
                 console.log(`[sendAndLogNotification] Invalid FCM token deleted for ${recipientId}`);
+                
+                // Log the error for monitoring
+                await db.collection('NotificationErrors').add({
+                    userId: recipientId,
+                    errorCode: e.code,
+                    errorMessage: e.message,
+                    timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                    notificationType: type,
+                    resolved: false
+                });
+                
             } catch (deleteErr) {
                 console.error(`[sendAndLogNotification] Error deleting invalid FCM token for ${recipientId}: ${deleteErr.message}`);
             }
         }
+        
+        // Try to save notification to Firestore even if FCM fails
+        try {
+            const errorNotificationDoc = {
+                recipientId: recipientId,
+                title: title,
+                body: body,
+                type: type,
+                data: removeUndefined(data),
+                isRead: false,
+                timestamp: admin.firestore.FieldValue.serverTimestamp(),
+                senderId: data.senderId || '',
+                senderName: data.senderName || '',
+                senderAvatar: data.senderAvatar || '',
+                targetId: data.targetId || '',
+                targetType: data.targetType || '',
+                // Error information
+                delivered: false,
+                error: e.message,
+                errorCode: e.code,
+                retryCount: 0,
+                platform: 'server',
+                version: '1.0'
+            };
+            
+            await db.collection('Users')
+                .doc(recipientId)
+                .collection('Notifications')
+                .add(errorNotificationDoc);
+                
+            console.log(`[sendAndLogNotification] Notification saved to Firestore with error status for ${recipientId}`);
+            
+        } catch (firestoreError) {
+            console.error(`[sendAndLogNotification] Failed to save notification to Firestore: ${firestoreError.message}`);
+        }
+        
         return false;
     }
 }
