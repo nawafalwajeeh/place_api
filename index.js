@@ -241,7 +241,7 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
                     // Android 8.0+ notification importance
                     importance: 'high',
                     // Show timestamp
-                    eventTimestamp: new Date().toISOString(),
+                    eventTimestamp: new Date(),
                     // Vibration pattern
                     vibrateTimingsMillis: [0, 500, 250, 500],
                     // Light settings (LED)
