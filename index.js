@@ -182,58 +182,50 @@ function removeUndefined(obj) {
 // }
 
 async function sendAndLogNotification(recipientId, title, body, type, data = {}) {
-    // Validate recipientId
-    if (!recipientId || typeof recipientId !== 'string' || recipientId.trim() === '') {
-        console.warn(`[sendAndLogNotification] recipientId is invalid: ${recipientId}`);
-        return false;
-    }
-
     try {
-        // Get user's FCM token from Users collection
         const userDoc = await db.collection('Users').doc(recipientId).get();
-        const userData = userDoc.data();
-        const fcmToken = userData?.fcmToken;
-
-        console.log(`[sendAndLogNotification] Fetched FCM token for user ${recipientId}: ${fcmToken ? 'Exists' : 'NOT FOUND'}`);
+        const fcmToken = userDoc.data()?.fcmToken;
 
         if (!fcmToken) {
-            console.warn(`[sendAndLogNotification] FCM token not found for user ${recipientId}. Cannot send notification.`);
+            console.warn(`No FCM token for user ${recipientId}`);
             return false;
         }
 
-        // Extract sender info for WhatsApp-style notification
         const senderAvatar = data.senderAvatar || '';
         const senderName = data.senderName || '';
         const hasAvatar = senderAvatar && senderAvatar.startsWith('http');
 
-        // Convert all data values to strings for FCM
-        const stringData = convertToStringValues({
-            type: type,
-            recipientId: recipientId,
-            ...data
-        });
-
-        // MINIMAL working notification payload - ONLY essential fields
+        // WhatsApp-style notification with avatar
         const message = {
             token: fcmToken,
             notification: { 
                 title: senderName || title,
                 body: body,
+                // For iOS to show image
+                ...(hasAvatar && { imageUrl: senderAvatar })
             },
-            data: stringData,
+            data: convertToStringValues({
+                type: type,
+                recipientId: recipientId,
+                senderAvatar: senderAvatar,
+                senderName: senderName,
+                ...data
+            }),
             android: {
                 priority: 'high',
                 notification: {
                     channelId: 'reviews_channel',
                     color: '#25D366', // WhatsApp green
                     sound: 'default',
-                    // Avatar as icon
-                    icon: hasAvatar ? senderAvatar : 'default_icon',
-                    // Large icon for expanded notification
-                    ...(hasAvatar && { image: senderAvatar }),
+                    // IMPORTANT: For Android to show avatar
+                    ...(hasAvatar && { 
+                        icon: senderAvatar, // Small icon in status bar
+                        image: senderAvatar // Large image when expanded
+                    }),
                     clickAction: 'FLUTTER_NOTIFICATION_CLICK',
-                    // REMOVE: eventTimestamp, lightSettings, vibrateTimingsMillis
-                    visibility: 'public',
+                    // Add this for Android to show as messaging style
+                    style: 'picture',
+                    picture: hasAvatar ? senderAvatar : undefined
                 }
             },
             apns: {
@@ -241,53 +233,46 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
                     aps: {
                         sound: 'default',
                         badge: 1,
+                        // For iOS to show image
                         'mutable-content': hasAvatar ? 1 : 0,
-                        category: 'MESSAGE_CATEGORY',
-                        subtitle: senderName,
+                        // iOS attachment for image
+                        ...(hasAvatar && { 
+                            'attachment-url': senderAvatar 
+                        })
                     }
+                },
+                // iOS headers
+                headers: {
+                    'apns-priority': '10',
+                    'apns-push-type': 'alert'
+                },
+                // For iOS rich notifications
+                fcmOptions: {
+                    imageUrl: hasAvatar ? senderAvatar : undefined
+                }
+            },
+            // For web notifications
+            webpush: {
+                notification: {
+                    ...(hasAvatar && { 
+                        icon: senderAvatar,
+                        image: senderAvatar 
+                    })
                 }
             }
         };
 
-        console.log(`[sendAndLogNotification] Sending minimal notification to ${recipientId}`);
+        console.log(`Sending notification with avatar: ${hasAvatar ? 'Yes' : 'No'}`);
+        console.log(`Avatar URL: ${senderAvatar}`);
+
+        await admin.messaging().send(message);
+        console.log(`✅ Notification sent to ${recipientId}`);
         
-        // Send the notification
-        const response = await admin.messaging().send(message);
-        console.log(`[sendAndLogNotification] ✅ Notification sent successfully. Message ID: ${response}`);
-
         // Save to Firestore
-        const notificationDoc = {
-            recipientId: recipientId,
-            title: title,
-            body: body,
-            type: type,
-            data: removeUndefined(data),
-            isRead: false,
-            timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            senderId: data.senderId || '',
-            senderName: senderName || '',
-            senderAvatar: senderAvatar || '',
-            targetId: data.targetId || '',
-            targetType: data.targetType || '',
-            delivered: true,
-            fcmMessageId: response
-        };
-
         await db.collection('Users')
             .doc(recipientId)
             .collection('Notifications')
-            .add(notificationDoc);
-
-        console.log(`[sendAndLogNotification] ✅ Notification saved to Firestore for user ${recipientId}.`);
-        
-        return true;
-
-    } catch (e) {
-        console.error(`[sendAndLogNotification] ❌ Error sending notification to ${recipientId}:`, e.message);
-        
-        // Save error to Firestore
-        try {
-            const errorNotificationDoc = {
+            .add({
                 recipientId: recipientId,
                 title: title,
                 body: body,
@@ -295,26 +280,18 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
                 data: removeUndefined(data),
                 isRead: false,
                 timestamp: admin.firestore.FieldValue.serverTimestamp(),
-                delivered: false,
-                error: e.message,
-                errorCode: e.code
-            };
-            
-            await db.collection('Users')
-                .doc(recipientId)
-                .collection('Notifications')
-                .add(errorNotificationDoc);
-                
-            console.log(`[sendAndLogNotification] ⚠️ Notification saved to Firestore with error status for ${recipientId}`);
-            
-        } catch (firestoreError) {
-            console.error(`[sendAndLogNotification] ❌ Failed to save notification to Firestore: ${firestoreError.message}`);
-        }
+                senderAvatar: senderAvatar,
+                senderName: senderName,
+                delivered: true,
+            });
         
+        return true;
+
+    } catch (e) {
+        console.error(`❌ Error: ${e.message}`);
         return false;
     }
 }
-
 // --- API Endpoint to Register/Update FCM Token ---
 app.post('/register-token', async (req, res) => {
     const { userId, fcmToken } = req.body;
