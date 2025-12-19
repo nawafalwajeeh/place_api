@@ -64,16 +64,162 @@ function removeUndefined(obj) {
 
 
 // Send and Save Notifications
+// async function sendAndLogNotification(recipientId, title, body, type, data = {}) {
+//     try {
+//         const userDoc = await db.collection('Users').doc(recipientId).get();
+//         const fcmToken = userDoc.data()?.fcmToken;
+
+//         if (!fcmToken) {
+//             console.warn(`[sendAndLogNotification] No FCM token for user ${recipientId}`);
+//             return false;
+//         }
+
+//         let senderAvatar = data.senderAvatar || '';
+//         const senderName = data.senderName || '';
+//         const targetId = data.targetId || '';
+//         const targetType = data.targetType || '';
+
+//         // Validate and clean avatar URL
+//         let hasAvatar = false;
+//         if (senderAvatar && senderAvatar.startsWith('http')) {
+//             // Ensure it's a direct image URL, not a page
+//             if (!senderAvatar.match(/\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i)) {
+//                 console.warn(`[sendAndLogNotification] Avatar URL may not be a direct image: ${senderAvatar}`);
+//                 // Try to use a fallback
+//                 senderAvatar = 'https://ui-avatars.com/api/?name=' + encodeURIComponent(senderName || 'User') + '&background=1C59A4&color=fff&size=200';
+//             }
+//             hasAvatar = true;
+//         } else if (senderAvatar === '') {
+//             // Generate a colored avatar with initials
+//             const initials = (senderName || 'U').charAt(0).toUpperCase();
+//             senderAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(initials)}&background=1C59A4&color=fff&size=200&bold=true`;
+//             hasAvatar = true;
+//         }
+
+//         // Generate unique ID
+//         const notificationId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
+//         // WhatsApp-style notification
+//         const message = {
+//             token: fcmToken,
+//             notification: { 
+//                 title: senderName || title,
+//                 body: body,
+//                 // iOS specific image - use smaller size
+//                 ...(hasAvatar && { 
+//                     imageUrl: `${senderAvatar}${senderAvatar.includes('?') ? '&' : '?'}size=400x400`
+//                 })
+//             },
+//             data: convertToStringValues({
+//                 // Core fields
+//                 type: type,
+//                 recipientId: recipientId,
+//                 notificationId: notificationId,
+                
+//                 // Sender info
+//                 senderAvatar: senderAvatar,
+//                 senderName: senderName,
+//                 senderId: data.senderId || '',
+                
+//                 // Target info
+//                 targetId: targetId,
+//                 targetType: targetType,
+                
+//                 // Content
+//                 title: title,
+//                 body: body,
+                
+//                 // App color
+//                 appColor: '#1C59A4',
+                
+//                 // Extra data
+//                 ...data
+//             }),
+//             android: {
+//                 priority: 'high',
+//                 notification: {
+//                     channelId: 'reviews_channel',
+//                     color: '#1C59A4',
+//                     sound: 'default',
+//                     icon: 'ic_notification',
+//                     clickAction: 'FLUTTER_NOTIFICATION_CLICK',
+//                     tag: notificationId,
+//                     // Only add image if we have a valid avatar
+//                     ...(hasAvatar && { image: `${senderAvatar}${senderAvatar.includes('?') ? '&' : '?'}w=400&h=400&fit=crop` }),
+//                 }
+//             },
+//             apns: {
+//                 payload: {
+//                     aps: {
+//                         sound: 'default',
+//                         badge: 1,
+//                         'mutable-content': hasAvatar ? 1 : 0,
+//                         subtitle: senderName,
+//                         category: 'MESSAGE_CATEGORY',
+//                     }
+//                 },
+//                 headers: {
+//                     'apns-priority': '10',
+//                     'apns-push-type': 'alert',
+//                 },
+//                 fcmOptions: {
+//                     imageUrl: hasAvatar ? `${senderAvatar}${senderAvatar.includes('?') ? '&' : '?'}w=400&h=400&fit=crop` : undefined,
+//                 }
+//             }
+//         };
+
+//         console.log(`[sendAndLogNotification] Sending to ${recipientId}`);
+//         console.log(`[sendAndLogNotification] Avatar URL: ${senderAvatar}`);
+
+//         const response = await admin.messaging().send(message);
+//         console.log(`[sendAndLogNotification] ✅ Notification sent`);
+
+//         // Save to Firestore
+//         const notificationDoc = {
+//             id: notificationId,
+//             recipientId: recipientId,
+//             title: title,
+//             body: body,
+//             type: type,
+//             senderId: data.senderId || '',
+//             senderName: senderName,
+//             senderAvatar: senderAvatar,
+//             targetId: targetId,
+//             targetType: targetType,
+//             isRead: false,
+//             timestamp: admin.firestore.FieldValue.serverTimestamp(),
+//             delivered: true,
+//             fcmMessageId: response,
+//             data: removeUndefined(data),
+//         };
+
+//         await db.collection('Users')
+//             .doc(recipientId)
+//             .collection('Notifications')
+//             .doc(notificationId)
+//             .set(notificationDoc);
+
+//         console.log(`[sendAndLogNotification] ✅ Saved to Firestore`);
+        
+//         return true;
+
+//     } catch (e) {
+//         console.error(`[sendAndLogNotification] ❌ Error:`, e.message);
+//         return false;
+//     }
+// }
+
+//---------new to try---------
+// Send and Save Notifications - Improved to handle missing tokens
 async function sendAndLogNotification(recipientId, title, body, type, data = {}) {
     try {
         const userDoc = await db.collection('Users').doc(recipientId).get();
-        const fcmToken = userDoc.data()?.fcmToken;
-
-        if (!fcmToken) {
-            console.warn(`[sendAndLogNotification] No FCM token for user ${recipientId}`);
+        if (!userDoc.exists) {
+            console.warn(`[sendAndLogNotification] User ${recipientId} not found in Firestore`);
             return false;
         }
 
+        const fcmToken = userDoc.data()?.fcmToken;
         let senderAvatar = data.senderAvatar || '';
         const senderName = data.senderName || '';
         const targetId = data.targetId || '';
@@ -82,99 +228,87 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
         // Validate and clean avatar URL
         let hasAvatar = false;
         if (senderAvatar && senderAvatar.startsWith('http')) {
-            // Ensure it's a direct image URL, not a page
             if (!senderAvatar.match(/\.(jpg|jpeg|png|gif|webp)(\?.*)?$/i)) {
-                console.warn(`[sendAndLogNotification] Avatar URL may not be a direct image: ${senderAvatar}`);
-                // Try to use a fallback
                 senderAvatar = 'https://ui-avatars.com/api/?name=' + encodeURIComponent(senderName || 'User') + '&background=1C59A4&color=fff&size=200';
             }
             hasAvatar = true;
         } else if (senderAvatar === '') {
-            // Generate a colored avatar with initials
             const initials = (senderName || 'U').charAt(0).toUpperCase();
             senderAvatar = `https://ui-avatars.com/api/?name=${encodeURIComponent(initials)}&background=1C59A4&color=fff&size=200&bold=true`;
             hasAvatar = true;
         }
 
-        // Generate unique ID
         const notificationId = `notif_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-        // WhatsApp-style notification
-        const message = {
-            token: fcmToken,
-            notification: { 
-                title: senderName || title,
-                body: body,
-                // iOS specific image - use smaller size
-                ...(hasAvatar && { 
-                    imageUrl: `${senderAvatar}${senderAvatar.includes('?') ? '&' : '?'}size=400x400`
-                })
-            },
-            data: convertToStringValues({
-                // Core fields
-                type: type,
-                recipientId: recipientId,
-                notificationId: notificationId,
-                
-                // Sender info
-                senderAvatar: senderAvatar,
-                senderName: senderName,
-                senderId: data.senderId || '',
-                
-                // Target info
-                targetId: targetId,
-                targetType: targetType,
-                
-                // Content
-                title: title,
-                body: body,
-                
-                // App color
-                appColor: '#1C59A4',
-                
-                // Extra data
-                ...data
-            }),
-            android: {
-                priority: 'high',
-                notification: {
-                    channelId: 'reviews_channel',
-                    color: '#1C59A4',
-                    sound: 'default',
-                    icon: 'ic_notification',
-                    clickAction: 'FLUTTER_NOTIFICATION_CLICK',
-                    tag: notificationId,
-                    // Only add image if we have a valid avatar
-                    ...(hasAvatar && { image: `${senderAvatar}${senderAvatar.includes('?') ? '&' : '?'}w=400&h=400&fit=crop` }),
-                }
-            },
-            apns: {
-                payload: {
-                    aps: {
-                        sound: 'default',
-                        badge: 1,
-                        'mutable-content': hasAvatar ? 1 : 0,
-                        subtitle: senderName,
-                        category: 'MESSAGE_CATEGORY',
+        // Attempt to send FCM only if token exists
+        let fcmMessageId = null;
+        let delivered = false;
+
+        if (fcmToken) {
+            try {
+                const message = {
+                    token: fcmToken,
+                    notification: { 
+                        title: senderName || title,
+                        body: body,
+                        ...(hasAvatar && { 
+                            imageUrl: `${senderAvatar}${senderAvatar.includes('?') ? '&' : '?'}size=400x400`
+                        })
+                    },
+                    data: convertToStringValues({
+                        type: type,
+                        recipientId: recipientId,
+                        notificationId: notificationId,
+                        senderAvatar: senderAvatar,
+                        senderName: senderName,
+                        senderId: data.senderId || '',
+                        targetId: targetId,
+                        targetType: targetType,
+                        title: title,
+                        body: body,
+                        appColor: '#1C59A4',
+                        ...data
+                    }),
+                    android: {
+                        priority: 'high',
+                        notification: {
+                            channelId: 'reviews_channel',
+                            color: '#1C59A4',
+                            sound: 'default',
+                            icon: 'ic_notification',
+                            clickAction: 'FLUTTER_NOTIFICATION_CLICK',
+                            tag: notificationId,
+                            ...(hasAvatar && { image: `${senderAvatar}${senderAvatar.includes('?') ? '&' : '?'}w=400&h=400&fit=crop` }),
+                        }
+                    },
+                    apns: {
+                        payload: {
+                            aps: {
+                                sound: 'default',
+                                badge: 1,
+                                'mutable-content': hasAvatar ? 1 : 0,
+                                subtitle: senderName,
+                                category: 'MESSAGE_CATEGORY',
+                            }
+                        },
+                        fcmOptions: {
+                            imageUrl: hasAvatar ? `${senderAvatar}${senderAvatar.includes('?') ? '&' : '?'}w=400&h=400&fit=crop` : undefined,
+                        }
                     }
-                },
-                headers: {
-                    'apns-priority': '10',
-                    'apns-push-type': 'alert',
-                },
-                fcmOptions: {
-                    imageUrl: hasAvatar ? `${senderAvatar}${senderAvatar.includes('?') ? '&' : '?'}w=400&h=400&fit=crop` : undefined,
-                }
+                };
+
+                fcmMessageId = await admin.messaging().send(message);
+                delivered = true;
+                console.log(`[sendAndLogNotification] ✅ FCM sent to ${recipientId}`);
+            } catch (fcmError) {
+                console.warn(`[sendAndLogNotification] ⚠️ FCM delivery failed for ${recipientId}:`, fcmError.message);
+                // We continue so it still gets saved to Firestore
             }
-        };
+        } else {
+            console.warn(`[sendAndLogNotification] ℹ️ No FCM token for user ${recipientId}. Skipping FCM send.`);
+        }
 
-        console.log(`[sendAndLogNotification] Sending to ${recipientId}`);
-        console.log(`[sendAndLogNotification] Avatar URL: ${senderAvatar}`);
-
-        const response = await admin.messaging().send(message);
-        console.log(`[sendAndLogNotification] ✅ Notification sent`);
-
-        // Save to Firestore
+        // ALWAYS Save to Firestore (The user will see it in-app)
         const notificationDoc = {
             id: notificationId,
             recipientId: recipientId,
@@ -188,8 +322,8 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
             targetType: targetType,
             isRead: false,
             timestamp: admin.firestore.FieldValue.serverTimestamp(),
-            delivered: true,
-            fcmMessageId: response,
+            delivered: delivered,
+            fcmMessageId: fcmMessageId,
             data: removeUndefined(data),
         };
 
@@ -199,12 +333,12 @@ async function sendAndLogNotification(recipientId, title, body, type, data = {})
             .doc(notificationId)
             .set(notificationDoc);
 
-        console.log(`[sendAndLogNotification] ✅ Saved to Firestore`);
+        console.log(`[sendAndLogNotification] ✅ Saved to Firestore for ${recipientId}`);
         
-        return true;
+        return true; // We return true because it was at least saved to Firestore
 
     } catch (e) {
-        console.error(`[sendAndLogNotification] ❌ Error:`, e.message);
+        console.error(`[sendAndLogNotification] ❌ Global Error:`, e.message);
         return false;
     }
 }
